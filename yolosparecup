@@ -1,0 +1,234 @@
+import cv2
+import math
+import time
+from ultralytics import YOLO
+
+# ------------ CONFIG ------------
+VIDEO_INDEX = 0
+USE_DSHOW = True          # True on Windows
+CONF_THRESH = 0.35
+
+# treat these COCO classes as "containers"
+# 41=cup, 70=toilet, 45=bowl, 40=wine glass
+CONTAINER_CLASS_IDS = [41, 70, 45, 40]
+
+NUM_CAPTURE_FRAMES = 8    # how many frames to average when you press 'c'
+CAPTURE_INTERVAL = 0.04   # seconds between capture frames (~25 fps)
+# --------------------------------
+
+def cylinder_volume_ml(h_mm, d_mm):
+    """Approximate cup as cylinder, h,d in mm."""
+    h_cm = h_mm / 10.0
+    r_cm = (d_mm / 2.0) / 10.0
+    return math.pi * r_cm * r_cm * h_cm
+
+# ---- camera ----
+if USE_DSHOW:
+    cap = cv2.VideoCapture(VIDEO_INDEX, cv2.CAP_DSHOW)
+else:
+    cap = cv2.VideoCapture(VIDEO_INDEX)
+
+if not cap.isOpened():
+    print("ERROR: cannot open camera")
+    raise SystemExit
+
+# ---- YOLO ----
+print("Loading YOLOv8n...")
+model = YOLO("yolov8n.pt")
+names = model.names
+print("Loaded.")
+
+# ---- UI ----
+cv2.namedWindow("CupSingleYOLOavg")
+
+def nothing(x): pass
+
+# per-axis px/mm (depth vs width)
+cv2.createTrackbar("PXmm_H", "CupSingleYOLOavg", 3, 20, nothing)
+cv2.createTrackbar("PXmm_W", "CupSingleYOLOavg", 3, 20, nothing)
+
+# global volume scale (x100) – can leave at 100 once calibrated
+cv2.createTrackbar("VolScale_x100", "CupSingleYOLOavg", 100, 300, nothing)
+
+print("Controls:")
+print("  c = capture & analyze (multi-frame averaged)")
+print("  r = return to live preview")
+print("  q = quit\n")
+
+captured_frame = None
+captured_box = None   # (x1, y1, x2, y2, cls_id, conf)
+
+def analyze_frame(frame, box):
+    """Use a precomputed YOLO box to compute volume."""
+    H, W = frame.shape[:2]
+    display = frame.copy()
+
+    pxmm_h = cv2.getTrackbarPos("PXmm_H", "CupSingleYOLOavg")
+    pxmm_w = cv2.getTrackbarPos("PXmm_W", "CupSingleYOLOavg")
+    vscale = cv2.getTrackbarPos("VolScale_x100", "CupSingleYOLOavg")
+
+    if pxmm_h < 1: pxmm_h = 1
+    if pxmm_w < 1: pxmm_w = 1
+    if vscale < 1: vscale = 1
+
+    vol_scale = vscale / 100.0
+
+    h_px = w_px = 0
+    h_mm = d_mm = None
+    vol_raw = vol_final = None
+
+    if box is not None:
+        x1, y1, x2, y2, cls_id, conf = box
+
+        # draw YOLO box + label
+        label = f"{names[cls_id]} {conf:.2f}"
+        cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(display, label, (x1, max(0, y1 - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+        raw_w = abs(x2 - x1)
+        raw_h = abs(y2 - y1)
+
+        # ensure vertical dimension is height
+        if raw_h < raw_w:
+            raw_h, raw_w = raw_w, raw_h
+
+        h_px = raw_h
+        w_px = raw_w
+
+        h_mm = h_px / pxmm_h
+        d_mm = w_px / pxmm_w
+
+        vol_raw   = cylinder_volume_ml(h_mm, d_mm)
+        vol_final = vol_raw * vol_scale
+
+        # text overlays
+        cv2.putText(display,
+                    f"h_px={h_px}  w_px={w_px}",
+                    (10, 55),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+        cv2.putText(display,
+                    f"h_mm={h_mm:.1f}  d_mm={d_mm:.1f}",
+                    (10, 80),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+        cv2.putText(display,
+                    f"Vol(raw)={vol_raw:.1f} mL  x{vol_scale:.2f}",
+                    (10, 105),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+
+        cv2.putText(display,
+                    f"Volume ≈ {vol_final:.1f} mL",
+                    (10, 130),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+    else:
+        cv2.putText(display,
+                    "No container detected in captured frames",
+                    (10, 55),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+    return display
+
+def capture_average_box():
+    """Capture multiple frames and average YOLO boxes."""
+    sum_x1 = sum_y1 = sum_x2 = sum_y2 = 0.0
+    sum_conf = 0.0
+    sum_cls  = 0.0
+    count = 0
+    last_frame = None
+
+    for i in range(NUM_CAPTURE_FRAMES):
+        ret, frame = cap.read()
+        if not ret:
+            break
+        last_frame = frame.copy()
+
+        results = model(frame, conf=CONF_THRESH, verbose=False)
+
+        best_box = None
+        best_conf = 0.0
+        best_cls  = None
+
+        if len(results):
+            boxes = results[0].boxes
+            for box in boxes:
+                cls_id = int(box.cls[0])
+                if cls_id not in CONTAINER_CLASS_IDS:
+                    continue
+
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                conf = float(box.conf[0])
+                area = (x2 - x1) * (y2 - y1)
+                if area <= 0:
+                    continue
+
+                if conf > best_conf:
+                    best_conf = conf
+                    best_box  = (x1, y1, x2, y2)
+                    best_cls  = cls_id
+
+        if best_box is not None:
+            x1, y1, x2, y2 = best_box
+            sum_x1   += x1
+            sum_y1   += y1
+            sum_x2   += x2
+            sum_y2   += y2
+            sum_conf += best_conf
+            sum_cls  += best_cls
+            count    += 1
+
+        time.sleep(CAPTURE_INTERVAL)
+
+    if count == 0 or last_frame is None:
+        return None, None
+
+    # average the boxes
+    mean_x1 = int(sum_x1 / count)
+    mean_y1 = int(sum_y1 / count)
+    mean_x2 = int(sum_x2 / count)
+    mean_y2 = int(sum_y2 / count)
+    mean_conf = float(sum_conf / count)
+    mean_cls  = int(round(sum_cls / count))
+
+    avg_box = (mean_x1, mean_y1, mean_x2, mean_y2, mean_cls, mean_conf)
+    return last_frame, avg_box
+
+# ================= MAIN LOOP =================
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    if captured_frame is None:
+        # live preview
+        preview = frame.copy()
+        cv2.putText(preview,
+                    "LIVE - press 'c' to capture(avg), 'q' to quit",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.imshow("CupSingleYOLOavg", preview)
+    else:
+        processed = analyze_frame(captured_frame, captured_box)
+        cv2.putText(processed,
+                    "CAPTURED - press 'r' for new shot, 'q' to quit",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.imshow("CupSingleYOLOavg", processed)
+
+    key = cv2.waitKey(30) & 0xFF
+    if key == ord('q'):
+        break
+    elif key == ord('c'):
+        print("Capturing", NUM_CAPTURE_FRAMES, "frames for averaging...")
+        captured_frame, captured_box = capture_average_box()
+        if captured_frame is None:
+            print("No valid cup detected during capture.")
+        else:
+            print("Capture complete.")
+    elif key == ord('r'):
+        captured_frame = None
+        captured_box = None
+
+cap.release()
+cv2.destroyAllWindows()
