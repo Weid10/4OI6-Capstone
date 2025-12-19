@@ -32,9 +32,19 @@ time-> grabs timestamp for recording data (might be useful later to calculate de
 
 yolo-> YouOnlyLookOnce prebuilt object recognition and classification beast
 
+
+### Run Model on Desktop
+
+```
+cd ./4OI6-Capstone
+source ./venv/bin/activate
+python3 ./danielspi/main.py
+```
+
+
 ### Issues
 
 - https://github.com/raspberrypi/picamera2/issues/972
   - /boot/firmware/config.txt: dtoverlay=vc4-kms-v3d -> dtoverlay=vc4-kms-v3d,cma-512
 - Camera saves photo 90*
-  - 
+  - rotate image array using numpy
