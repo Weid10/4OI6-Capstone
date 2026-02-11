@@ -1,0 +1,15 @@
+pip uninstall torch torchvision torchaudio ultralytics -y
+# PyTorch 1.13.1 - stable for ARM
+wget https://github.com/nmilosev/pytorch-arm-builds/releases/download/v1.13.1/pytorch-1.13.1-cp39-cp39-linux_aarch64.whl
+
+# Install it
+pip install pytorch-1.13.1-cp39-cp39-linux_aarch64.whl
+
+pip install torchvision torchaudio
+pip install ultralytics
+
+
+from ultralytics import YOLO
+
+model = YOLO("yolov5n.pt")
+results = model.predict(source=0, show=True)
