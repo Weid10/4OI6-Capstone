@@ -63,6 +63,7 @@ source yolopi/bin/activate
 pip install --upgrade pip
 pip install ultralytics opencv-python
 
+wget https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5n.onnx
 
 
 
