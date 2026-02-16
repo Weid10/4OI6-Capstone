@@ -28,5 +28,8 @@ def take_photo(save_location="samples/test.jpg"):
         print(f"Photo taken and saved to {save_location}")
 
     picam2.stop()
+    print("heloo")
 
     return array
+
+take_photo()
