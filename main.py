@@ -1,5 +1,6 @@
 import cv2 as cv
 import capture
+import yolo_picam_sparecup
 
 SAVE_PHOTO = False
 
@@ -15,4 +16,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    picam2 = capture.camera_init()
+    yolo_picam_sparecup.main(picam2)
+    picam2.stop()

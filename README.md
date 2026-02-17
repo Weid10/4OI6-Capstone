@@ -1,5 +1,22 @@
 # Fill-osopher
 
+## Files
+| File Name   | Library     | Function    | 
+|-            |-            |-            |
+| main.py     |             | Main function |
+| capture.py  | picamera2   | Take photo  | 
+| yolo.py     | yolo        | Process photo to determine volume |
+| serial.py   | pyserial    | Recieve control signal through serial | 
+
+
+### Run Model on Desktop
+
+```
+cd ./4OI6-Capstone
+source ./venv/bin/activate
+python3 ./main.py
+```
+
 
 ### Getting Started
 
@@ -10,15 +27,10 @@ pip install opencv-contrib-python
 # or
 sudo apt install -y python3-opencv
 sudo apt install -y opencv-data
-
 ```
 
 https://datasheets.raspberrypi.com/camera/picamera2-manual.pdf
 
-take photo - picamera2
-process photo
-math to determine volume
-output i2c or something
 
 
 
@@ -59,4 +71,4 @@ pip install ultralytics opencv-python
 - https://github.com/raspberrypi/picamera2/issues/972
   - /boot/firmware/config.txt: dtoverlay=vc4-kms-v3d -> dtoverlay=vc4-kms-v3d,cma-512
 - Camera saves photo 90*
-  - 
+  - rotate image array using numpy

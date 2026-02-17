@@ -1,3 +1,7 @@
 venv/
 samples/*
 __pycache__/
+
+# Model files
+*.pt
+*.onnx
