@@ -3,43 +3,48 @@ from picamera2 import Picamera2
 import time
 import numpy as np
 
-WIDTH = 1980
+WIDTH = 1920
 HEIGHT = 1080
+DEFAULT_SAVE_PATH = "./samples/test.jpg"
 
-def camera_init():
-    # Initialize Picamera2 for capturing images
-    picam2 = Picamera2()
+class Camera:
 
-    camera_config = picam2.create_still_configuration()
-    camera_config['main']['format'] = 'BGR888'
-    camera_config['main']['size'] = (WIDTH, HEIGHT)
-    picam2.configure(camera_config)
-    picam2.start()
+    def __init__(self):
+        # Initialize Picamera2 for capturing images
+        self.picam2 = Picamera2()
 
-    time.sleep(2)   # Allow camera to warm up
+        camera_config = self.picam2.create_still_configuration()
+        camera_config['main']['format'] = 'RGB888'
+        camera_config['main']['size'] = (WIDTH, HEIGHT)
+        self.picam2.configure(camera_config)
+        self.picam2.start()
 
-    return picam2
-
-def take_photo(picam2):
-    # Use Picamera2 to take a photo and save it to OUTPUT_PATH/OUTPUT_NAME
-    # https://datasheets.raspberrypi.com/camera/picamera2-manual.pdf
-
-    array = picam2.capture_array()
-    array = np.rot90(array, k=3)  # Rotate to correct orientation
-
-    return array
+        time.sleep(2)   # Allow camera to warm up
 
 
-def save_photo(array, save_location="samples/test.jpg"):
-    # Save a numpy array as an image file
+    def take_photo(self):
+        # Use Picamera2 to take a photo and save it to OUTPUT_PATH/OUTPUT_NAME
+        # https://datasheets.raspberrypi.com/camera/picamera2-manual.pdf
     
-    import cv2
-    cv2.imwrite(save_location, cv2.cvtColor(array, cv2.COLOR_RGB2BGR))
-    print(f"Photo saved to {save_location}")
+        rgb = self.picam2.capture_array()
+        rgb_corrected = np.rot90(rgb, k=3)  # Rotate to correct orientation
+
+        return rgb_corrected
+
+
+    def save_photo(self, array, save_location=DEFAULT_SAVE_PATH):
+        # Save a numpy array as an image file
+        
+        import cv2
+        cv2.imwrite(save_location, array)
+        print(f"Photo saved to {save_location}")
+
+
+    def __exit__(self):
+        self.picam2.stop()
 
 
 if __name__ == "__main__":
-    picam2 = camera_init()
-    array = take_photo(picam2)
-    save_photo(array, save_location="../samples/test.jpg")
-    picam2.stop()
+    cam = Camera()
+    rgb = cam.take_photo()
+    cam.save_photo(rgb, save_location=DEFAULT_SAVE_PATH)

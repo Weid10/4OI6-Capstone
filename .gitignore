@@ -1,6 +1,7 @@
 venv/
 samples/*
 __pycache__/
+.vscode/
 
 # Model files
 *.pt
