@@ -10,7 +10,9 @@ DEFAULT_SAVE_PATH = "./samples/test.jpg"
 class Camera:
 
     def __init__(self):
-        # Initialize Picamera2 for capturing images
+        """
+        Initialize Picamera2 for capturing images
+        """
         self.picam2 = Picamera2()
 
         camera_config = self.picam2.create_still_configuration()
@@ -23,8 +25,10 @@ class Camera:
 
 
     def take_photo(self):
-        # Use Picamera2 to take a photo and save it to OUTPUT_PATH/OUTPUT_NAME
-        # https://datasheets.raspberrypi.com/camera/picamera2-manual.pdf
+        """
+        Use Picamera2 to take a photo and save it to OUTPUT_PATH/OUTPUT_NAME
+        https://datasheets.raspberrypi.com/camera/picamera2-manual.pdf
+        """
     
         rgb = self.picam2.capture_array()
         rgb_corrected = np.rot90(rgb, k=3)  # Rotate to correct orientation
@@ -33,7 +37,9 @@ class Camera:
 
 
     def save_photo(self, array, save_location=DEFAULT_SAVE_PATH):
-        # Save a numpy array as an image file
+        """
+        Save a numpy array as an image file
+        """
         
         import cv2
         cv2.imwrite(save_location, array)
