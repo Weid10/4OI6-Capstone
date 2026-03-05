@@ -2,16 +2,16 @@ import cv2
 import capture
 import yolo
 import serial_control
+import time
 
-USE_TEST_PHOTO = True
-SAVE_PHOTO = False
+USE_TEST_PHOTO = False
+SAVE_PHOTO = True
 HEADLESS = True
 
 if __name__ == "__main__":
     
     cam = capture.Camera()
     rgb_array = None
-    cam = capture.Camera()
     m = yolo.model()
     serial_control.init_serial()
 
@@ -30,7 +30,10 @@ if __name__ == "__main__":
 
         if HEADLESS:
             print("Analyzing photo...")
-            m.analyze_frame(rgb_array)
+            disp = m.analyze_frame(rgb_array)
+            disp = m.set_display(disp)
+            cam.save_photo(disp, save_location="./samples/test.jpg")
+
             print(f"Estimated volume: {m.vol_final:.1f} ml")
         else:
             disp = m.analyze_frame(rgb_array)
@@ -42,3 +45,4 @@ if __name__ == "__main__":
             cv2.imshow("CupPiYOLO", disp)
 
         serial_control.send_volume(m.vol_final)
+        time.sleep(10)

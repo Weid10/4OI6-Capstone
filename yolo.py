@@ -3,11 +3,11 @@ import math
 from ultralytics import YOLO # type: ignore
 
 # ------------ CONFIG ------------
-CONF_THRESH = 0.35
+CONF_THRESH = 0.1
 
 # treat these COCO classes as "containers"
 # 41=cup, 70=toilet, 45=bowl, 40=wine glass
-CONTAINER_CLASS_IDS = [41, 70, 45, 40]
+CONTAINER_CLASS_IDS = [41, 70, 45, 40, 39, 75]
 # --------------------------------
 
 def cylinder_volume_ml(h_mm, d_mm):
@@ -20,19 +20,19 @@ def cylinder_volume_ml(h_mm, d_mm):
 class model:
     def __init__(self):
 
-        self.best_box = None
+        self.best_box = (0,0,0,0)
         self.best_conf = 0.0
-        self.best_cls  = None
+        self.best_cls  = 0
 
-        self.pxmm_h = 3
-        self.pxmm_w = 3
-        self.vscale = 1000
+        self.pxmm_h = 7.6
+        self.pxmm_w = 6.1
+        self.vscale = 750
 
         self.dim_px = None
         self.dim_mm = None
         
-        self.vol_raw = None
-        self.vol_final = None
+        self.vol_raw = 0.0
+        self.vol_final = 0.0
 
         print("Loading YOLOv8n model...")
         self.model = YOLO("yolov8n.pt")
@@ -67,6 +67,7 @@ class model:
             boxes = results[0].boxes
             for box in boxes:
                 cls_id = int(box.cls[0])
+                print(cls_id)
                 if cls_id not in CONTAINER_CLASS_IDS:
                     continue
 
@@ -104,6 +105,8 @@ class model:
 
             self.dim_px = (h_px, w_px)
             self.dim_mm = (h_mm, d_mm)
+
+            print(f"{h_mm}, {d_mm}")
 
             self.vol_raw   = cylinder_volume_ml(h_mm, d_mm)
             self.vol_final = self.vol_raw * vol_scale

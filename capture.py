@@ -31,7 +31,7 @@ class Camera:
         """
     
         rgb = self.picam2.capture_array()
-        rgb_corrected = np.rot90(rgb, k=3)  # Rotate to correct orientation
+        rgb_corrected = np.rot90(rgb, k=1)  # Rotate to correct orientation
 
         return rgb_corrected
 

@@ -1,6 +1,6 @@
 import serial
 
-PORT_NAME = '/dev/ttyUSB0'  # Update this to serial port
+PORT_NAME = '/dev/ttyACM1'  # Update this to serial port
 BAUD_RATE = 9600
 TRIGGER_CHAR = 'V'
 
@@ -26,9 +26,14 @@ def wait_for_trigger():
     """
     
     while True:
-        char = ser.read(1).decode('utf-8', errors='ignore')
-        if char == TRIGGER_CHAR:
-            print(f"Trigger received: {TRIGGER_CHAR}")
+        # char = ser.read(1).decode('utf-8', errors='ignore')
+        # if char == TRIGGER_CHAR:
+        #     print(f"Trigger received: {TRIGGER_CHAR}")
+        #     return True
+
+        string = ser.read(4).decode('utf-8', errors='ignore')
+        if string == "Send":
+            print(f"Trigger received: {string}")
             return True
 
 def send_volume(volume_ml):
@@ -40,6 +45,9 @@ def send_volume(volume_ml):
     if ser.is_open:
         try:
             message = f"{int(volume_ml)}\n"
+
+            # message = f"250\n"
+
             ser.write(message.encode('utf-8'))
             print(f"Sent volume: {message.strip()}")
             return True
