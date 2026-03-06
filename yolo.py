@@ -28,8 +28,8 @@ class model:
         self.pxmm_w = 6.1
         self.vscale = 750
 
-        self.dim_px = None
-        self.dim_mm = None
+        self.dim_px = (0,0)
+        self.dim_mm = (0,0)
         
         self.vol_raw = 0.0
         self.vol_final = 0.0
@@ -67,7 +67,7 @@ class model:
             boxes = results[0].boxes
             for box in boxes:
                 cls_id = int(box.cls[0])
-                print(cls_id)
+                # print(cls_id)
                 if cls_id not in CONTAINER_CLASS_IDS:
                     continue
 
@@ -84,8 +84,6 @@ class model:
                 self.best_box  = (int(x1), int(y1), int(x2), int(y2))
                 self.best_cls  = cls_id
 
-        h_px = w_px = 0
-        h_mm = d_mm = None
 
         if self.best_box is not None:
             x1, y1, x2, y2 = self.best_box
@@ -106,7 +104,7 @@ class model:
             self.dim_px = (h_px, w_px)
             self.dim_mm = (h_mm, d_mm)
 
-            print(f"{h_mm}, {d_mm}")
+            # print(f"{h_mm}, {d_mm}")
 
             self.vol_raw   = cylinder_volume_ml(h_mm, d_mm)
             self.vol_final = self.vol_raw * vol_scale
@@ -115,7 +113,7 @@ class model:
         return display
 
 
-    def get_display(self):
+    def draw_trackbar(self):
         self.pxmm_h = cv2.getTrackbarPos("PXmm_H", "CupPiYOLO")
         self.pxmm_w = cv2.getTrackbarPos("PXmm_W", "CupPiYOLO")
         self.vscale = cv2.getTrackbarPos("VolScale_x1000", "CupPiYOLO")
@@ -124,7 +122,7 @@ class model:
         if self.vscale < 1: self.vscale = 1
 
 
-    def set_display(self, display):
+    def draw_frame(self, display):
         x1, y1, x2, y2 = self.best_box
         h_px, w_px = self.dim_px
         h_mm, d_mm = self.dim_mm
@@ -179,7 +177,7 @@ if __name__ == "__main__":
 
     while True:
         
-        m.get_display()
+        m.draw_trackbar()
         if rgb_frame is None:
             # blank screen with instructions until we capture
             blank = 255 * np.ones((480, 640, 3), dtype="uint8")
@@ -194,7 +192,7 @@ if __name__ == "__main__":
                         "Press 'c' for new capture, 'q' to quit",
                         (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-            disp = m.set_display(disp)
+            disp = m.draw_frame(disp)
             cv2.imshow("CupPiYOLO", disp)
 
         key = cv2.waitKey(3000) & 0xFF
