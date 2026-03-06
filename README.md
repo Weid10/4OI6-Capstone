@@ -6,7 +6,7 @@
 | main.py     |             | Main function |
 | capture.py  | picamera2   | Take photo  | 
 | yolo.py     | yolo        | Process photo to determine volume |
-| serial.py   | pyserial    | Recieve control signal through serial | 
+| serial_control.py   | pyserial    | Recieve control signal through serial | 
 
 
 ### Run Model on Desktop
@@ -24,6 +24,7 @@ python3 ./main.py
 python3 -m venv venv
 source ./venv/bin/activate
 pip install opencv-contrib-python
+pip install pyserial
 # or
 sudo apt install -y python3-opencv
 sudo apt install -y opencv-data
