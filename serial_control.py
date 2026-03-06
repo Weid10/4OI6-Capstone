@@ -1,6 +1,6 @@
 import serial
 
-PORT_NAME = '/dev/ttyACM1'  # Update this to serial port
+PORT_NAME = '/dev/ttyACM0'  # Update this to serial port
 BAUD_RATE = 9600
 TRIGGER_CHAR = 'V'
 
@@ -36,6 +36,16 @@ def wait_for_trigger():
             print(f"Trigger received: {string}")
             return True
 
+
+def clear_buffer():
+    """
+    Clear serial input buffer
+    """
+    if ser and ser.is_open:
+        ser.reset_input_buffer()
+        print("Serial input buffer cleared")
+
+
 def send_volume(volume_ml):
     """
     Send volume measurement to other device
@@ -54,7 +64,10 @@ def send_volume(volume_ml):
         except Exception as e:
             print(f"Error sending volume: {e}")
             return False
+        
+    clear_buffer()
     return False
+
 
 def close_serial():
     """Close serial connection."""

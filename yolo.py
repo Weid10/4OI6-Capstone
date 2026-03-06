@@ -24,8 +24,8 @@ class model:
         self.best_conf = 0.0
         self.best_cls  = 0
 
-        self.pxmm_h = 7.6
-        self.pxmm_w = 6.1
+        self.pxmm_h = 6.5
+        self.pxmm_w = 5.24
         self.vscale = 750
 
         self.dim_px = (0,0)

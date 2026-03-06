@@ -1,10 +1,10 @@
 import cv2
+import serial_control
 import capture
 import yolo
-import serial_control
 import time
 
-USE_TEST_PHOTO = True
+USE_TEST_PHOTO = False
 SAVE_PHOTO = True
 HEADLESS = True
 
@@ -15,9 +15,7 @@ if __name__ == "__main__":
     m = yolo.model()
     serial_control.init_serial()
 
-
     while True:
-
         # Get photo from camera or disk
         if not USE_TEST_PHOTO:
             # Wait for trigger from serial
