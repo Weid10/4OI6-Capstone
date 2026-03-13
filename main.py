@@ -11,7 +11,7 @@ HEADLESS = True
 if __name__ == "__main__":
     
     cam = capture.Camera()
-    rgb_array = None
+    rgb_frame = None
     m = yolo.model()
     serial_control.init_serial()
 
@@ -20,20 +20,23 @@ if __name__ == "__main__":
         if not USE_TEST_PHOTO:
             # Wait for trigger from serial
             serial_control.wait_for_trigger()
-            rgb_array = cam.take_photo()
+            rgb_frame = cam.take_photo()
             if SAVE_PHOTO:
-                cam.save_photo(rgb_array, save_location="./samples/test.jpg")
+                cam.save_photo(rgb_frame, save_location="./samples/test.jpg")
         else: 
             print("Using test photo from disk: ./samples/test.jpg")
-            rgb_array = cv2.imread("./samples/test.jpg")
+            rgb_frame = cv2.imread("./samples/test.jpg")
 
 
         # Analze the photo with YOLO and get the estimated volume
         print("Analyzing photo...")
-        disp = m.analyze_frame(rgb_array)
+        ret, disp = m.analyze_frame(rgb_frame)
+        if not ret:
+            print("No container detected, skipping serial send")
+            continue
 
         # set display to the marked image
-        disp = m.draw_frame(disp)
+        disp = m.draw_info(disp)
         print(f"Estimated volume: {m.vol_final:.1f} ml")
 
         if SAVE_PHOTO:

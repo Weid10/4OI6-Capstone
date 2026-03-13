@@ -10,7 +10,7 @@ HEADLESS = True
 
 if __name__ == "__main__":
     
-    rgb_array = None
+    rgb_frame = None
     m = yolo.model()
 
     # Load config parameters
@@ -26,15 +26,15 @@ if __name__ == "__main__":
         file_name = values[iteration]['name']
 
         print(f"Using test photos from disk: {file_name}")
-        rgb_array = cv2.imread(f"./samples/test/{file_name}")
+        rgb_frame = cv2.imread(f"./samples/test/{file_name}")
 
 
         # Analze the photo with YOLO and get the estimated volume
         print("Analyzing photo...")
-        disp = m.analyze_frame(rgb_array)
+        disp = m.analyze_frame(rgb_frame)
 
         # set display to the marked image
-        disp = m.draw_frame(disp)
+        disp = m.draw_info(disp)
         print(f"Estimated volume: {m.vol_final:.1f} ml")
 
         if SAVE_PHOTO:

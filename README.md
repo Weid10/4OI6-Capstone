@@ -73,3 +73,7 @@ pip install ultralytics opencv-python
   - /boot/firmware/config.txt: dtoverlay=vc4-kms-v3d -> dtoverlay=vc4-kms-v3d,cma-512
 - Camera saves photo 90*
   - rotate image array using numpy
+- Sources of errors
+  - Errors from measuring the depth of cup
+  - Errors from shape of cup
+  - Errors from thickness of cup
