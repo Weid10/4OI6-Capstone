@@ -1,0 +1,200 @@
+import cv2
+import numpy as np
+import math
+from ultralytics import YOLO
+import glob
+
+model = YOLO("yolov8n.pt")
+
+
+# -----------------------------
+# CLEAN MASK
+# -----------------------------
+def get_mask(roi):
+
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5,5), 0)
+
+    edges = cv2.Canny(blur, 40, 120)
+
+    _, th = cv2.threshold(gray, 0, 255,
+                          cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    mask = cv2.bitwise_or(edges, th)
+
+    kernel = np.ones((5,5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    mask = cv2.dilate(mask, kernel, iterations=2)
+
+    contours, _ = cv2.findContours(mask,
+                                   cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+
+    if contours:
+        largest = max(contours, key=cv2.contourArea)
+        clean = np.zeros_like(mask)
+        cv2.drawContours(clean, [largest], -1, 255, -1)
+        return clean
+
+    return mask
+
+
+# -----------------------------
+# HANDLE-SAFE WIDTH
+# -----------------------------
+def get_width_and_center(mask, y):
+
+    row = mask[y, :]
+    xs = np.where(row > 0)[0]
+
+    if len(xs) < 20:
+        return None, None
+
+    left = np.percentile(xs, 20)
+    right = np.percentile(xs, 80)
+
+    center = int((left + right) / 2)
+    width = int(right - left)
+
+    return width, center
+
+
+# -----------------------------
+# PROFILE EXTRACTION
+# -----------------------------
+def get_profile(mask):
+
+    h, w = mask.shape
+
+    widths = []
+    centers = []
+
+    for y in range(int(h*0.1), int(h*0.9)):
+
+        w_, c_ = get_width_and_center(mask, y)
+
+        if w_ is None:
+            continue
+
+        widths.append(w_)
+        centers.append(c_)
+
+    return widths, centers
+
+
+# -----------------------------
+# VOLUME
+# -----------------------------
+def frustum_volume(h, D, d, mm_per_pixel):
+
+    R = (D * mm_per_pixel) / 2
+    r = (d * mm_per_pixel) / 2
+    H = h * mm_per_pixel
+
+    return (math.pi * H * (R*R + R*r + r*r)) / 3 / 1000
+
+
+# -----------------------------
+# MAIN
+# -----------------------------
+image_paths = glob.glob("*.jpg")
+
+for path in image_paths:
+
+    frame = cv2.imread(path)
+    if frame is None:
+        continue
+
+    display = frame.copy()
+
+    results = model(frame)[0]
+
+    for box in results.boxes:
+
+        cls = int(box.cls[0])
+        label = results.names[cls]
+
+        if label != "cup":
+            continue
+
+        x1,y1,x2,y2 = map(int, box.xyxy[0])
+        cv2.rectangle(display,(x1,y1),(x2,y2),(0,255,0),2)
+
+        roi = frame[y1:y2, x1:x2]
+
+        mask = get_mask(roi)
+
+        widths, centers = get_profile(mask)
+
+        if len(widths) < 20:
+            continue
+
+        widths = np.array(widths)
+        centers = np.array(centers)
+
+        # -----------------------------
+        # STABLE WIDTHS
+        # -----------------------------
+        top_d = np.median(widths[:len(widths)//4])
+        bottom_d = np.median(widths[-len(widths)//4:])
+
+        # -----------------------------
+        # REAL SCALE (AUTO CALIBRATE)
+        # -----------------------------
+        real_diameter_mm = 80   # adjust if needed (your cup ≈ 8 cm)
+        mm_per_pixel = real_diameter_mm / top_d
+
+        # -----------------------------
+        # CENTER (LOCKED)
+        # -----------------------------
+        cx = (x1 + x2) // 2
+
+        # -----------------------------
+        # VOLUME
+        # -----------------------------
+        height_px = y2 - y1
+        volume = frustum_volume(height_px, top_d, bottom_d, mm_per_pixel)
+
+        # -----------------------------
+        # DRAW FRUSTUM
+        # -----------------------------
+        top_half = int(top_d / 2)
+        bot_half = int(bottom_d / 2)
+
+        pts = np.array([
+            [cx - top_half, y1],
+            [cx + top_half, y1],
+            [cx + bot_half, y2],
+            [cx - bot_half, y2]
+        ], np.int32)
+
+        overlay = display.copy()
+        cv2.fillPoly(overlay, [pts], (255, 0, 0))
+        cv2.addWeighted(overlay, 0.4, display, 0.6, 0, display)
+
+        cv2.polylines(display, [pts], True, (255, 0, 0), 2)
+
+        # -----------------------------
+        # TEXT
+        # -----------------------------
+        cv2.putText(display,
+                    f"{volume:.1f} mL",
+                    (x1, y1-10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9,
+                    (0,255,255),
+                    2)
+
+    # -----------------------------
+    # RESIZE DISPLAY
+    # -----------------------------
+    scale = 800 / display.shape[1]
+    display_small = cv2.resize(display,
+                               (800, int(display.shape[0]*scale)))
+
+    cv2.imshow("Result", display_small)
+    cv2.waitKey(1000)
+
+    cv2.imwrite(f"output_{path}", display)
+
+cv2.destroyAllWindows()
