@@ -4,8 +4,10 @@ import math
 from ultralytics import YOLO
 import glob
 
+# -----------------------------
+# LOAD MODEL
+# -----------------------------
 model = YOLO("yolov8n.pt")
-
 
 # -----------------------------
 # CLEAN MASK
@@ -40,7 +42,7 @@ def get_mask(roi):
 
 
 # -----------------------------
-# HANDLE-SAFE WIDTH
+# HANDLE-SAFE WIDTH + CENTER
 # -----------------------------
 def get_width_and_center(mask, y):
 
@@ -50,17 +52,22 @@ def get_width_and_center(mask, y):
     if len(xs) < 20:
         return None, None
 
-    left = np.percentile(xs, 20)
-    right = np.percentile(xs, 80)
+    left = np.percentile(xs, 10)
+    right = np.percentile(xs, 90)
 
-    center = int((left + right) / 2)
-    width = int(right - left)
+    center = (left + right) / 2
+
+    # 🔥 force symmetry (kills handle influence)
+    half_width = min(center - left, right - center)
+
+    width = int(2 * half_width)
+    center = int(center)
 
     return width, center
 
 
 # -----------------------------
-# PROFILE EXTRACTION
+# PROFILE
 # -----------------------------
 def get_profile(mask):
 
@@ -133,27 +140,33 @@ for path in image_paths:
         centers = np.array(centers)
 
         # -----------------------------
-        # STABLE WIDTHS
+        # STABLE TOP / BOTTOM
         # -----------------------------
         top_d = np.median(widths[:len(widths)//4])
         bottom_d = np.median(widths[-len(widths)//4:])
 
         # -----------------------------
-        # REAL SCALE (AUTO CALIBRATE)
+        # TRUE CENTER
         # -----------------------------
-        real_diameter_mm = 80   # adjust if needed (your cup ≈ 8 cm)
+        cx = x1 + int(np.median(centers))
+
+        # -----------------------------
+        # RIM POSITION (not bbox top)
+        # -----------------------------
+        y_top = y1 + int(0.05 * (y2 - y1))
+        y_bottom = y2
+
+        # -----------------------------
+        # AUTO SCALE (IMPORTANT)
+        # -----------------------------
+        real_diameter_mm = 80  # adjust if needed
         mm_per_pixel = real_diameter_mm / top_d
 
-        # -----------------------------
-        # CENTER (LOCKED)
-        # -----------------------------
-        cx = (x1 + x2) // 2
+        height_px = y_bottom - y_top
 
-        # -----------------------------
-        # VOLUME
-        # -----------------------------
-        height_px = y2 - y1
         volume = frustum_volume(height_px, top_d, bottom_d, mm_per_pixel)
+
+        print(f"{path} → Volume: {volume:.2f} mL")
 
         # -----------------------------
         # DRAW FRUSTUM
@@ -162,10 +175,10 @@ for path in image_paths:
         bot_half = int(bottom_d / 2)
 
         pts = np.array([
-            [cx - top_half, y1],
-            [cx + top_half, y1],
-            [cx + bot_half, y2],
-            [cx - bot_half, y2]
+            [cx - top_half, y_top],
+            [cx + top_half, y_top],
+            [cx + bot_half, y_bottom],
+            [cx - bot_half, y_bottom]
         ], np.int32)
 
         overlay = display.copy()
@@ -186,15 +199,18 @@ for path in image_paths:
                     2)
 
     # -----------------------------
-    # RESIZE DISPLAY
+    # RESIZE (no freeze)
     # -----------------------------
-    scale = 800 / display.shape[1]
+    scale = 900 / display.shape[1]
     display_small = cv2.resize(display,
-                               (800, int(display.shape[0]*scale)))
+                               (900, int(display.shape[0]*scale)))
 
     cv2.imshow("Result", display_small)
     cv2.waitKey(1000)
 
+    # -----------------------------
+    # SAVE OUTPUT
+    # -----------------------------
     cv2.imwrite(f"output_{path}", display)
 
 cv2.destroyAllWindows()
