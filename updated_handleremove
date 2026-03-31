@@ -1,0 +1,204 @@
+import cv2
+import numpy as np
+import math
+from ultralytics import YOLO
+import glob
+
+model = YOLO("yolov8n.pt")
+
+
+# -----------------------------
+# MASK
+# -----------------------------
+def get_mask(roi):
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5,5), 0)
+
+    edges = cv2.Canny(blur, 40, 120)
+
+    _, th = cv2.threshold(gray, 0, 255,
+                          cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    mask = cv2.bitwise_or(edges, th)
+
+    kernel = np.ones((5,5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    mask = cv2.dilate(mask, kernel, iterations=2)
+
+    contours, _ = cv2.findContours(mask,
+                                   cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+
+    if contours:
+        largest = max(contours, key=cv2.contourArea)
+        clean = np.zeros_like(mask)
+        cv2.drawContours(clean, [largest], -1, 255, -1)
+        return clean
+
+    return mask
+
+
+# -----------------------------
+# WIDTH
+# -----------------------------
+def get_width(mask, y):
+    xs = np.where(mask[y] > 0)[0]
+    if len(xs) < 20:
+        return None
+
+    left = np.percentile(xs, 10)
+    right = np.percentile(xs, 90)
+
+    return int(right - left)
+
+
+# -----------------------------
+# CENTER
+# -----------------------------
+def get_true_center(mask):
+    xs = np.where(mask > 0)[1]
+
+    if len(xs) < 50:
+        return None
+
+    left = np.percentile(xs, 20)
+    right = np.percentile(xs, 80)
+
+    return int((left + right) / 2)
+
+
+# -----------------------------
+# VOLUMES
+# -----------------------------
+def frustum_volume(h, D, d, mm_per_pixel):
+    R = (D * mm_per_pixel) / 2
+    r = (d * mm_per_pixel) / 2
+    H = h * mm_per_pixel
+    return (math.pi * H * (R*R + R*r + r*r)) / 3 / 1000
+
+
+def cylinder_volume(h, D, mm_per_pixel):
+    R = (D * mm_per_pixel) / 2
+    H = h * mm_per_pixel
+    return (math.pi * R * R * H) / 1000
+
+
+# -----------------------------
+# MAIN
+# -----------------------------
+image_paths = glob.glob("*.jpg")
+
+for path in image_paths:
+
+    frame = cv2.imread(path)
+    if frame is None:
+        continue
+
+    display = frame.copy()
+    results = model(frame)[0]
+
+    for box in results.boxes:
+
+        cls = int(box.cls[0])
+        if results.names[cls] != "cup":
+            continue
+
+        x1,y1,x2,y2 = map(int, box.xyxy[0])
+        cv2.rectangle(display,(x1,y1),(x2,y2),(0,255,0),2)
+
+        roi = frame[y1:y2, x1:x2]
+        mask = get_mask(roi)
+
+        h, w = mask.shape
+
+        widths = []
+        for y in range(int(h*0.1), int(h*0.9)):
+            w_ = get_width(mask, y)
+            if w_ is not None:
+                widths.append(w_)
+
+        if len(widths) < 20:
+            continue
+
+        widths = np.array(widths)
+
+        # -----------------------------
+        # TOP / BOTTOM
+        # -----------------------------
+        top_d = np.median(widths[:len(widths)//4])
+        bottom_d = np.median(widths[-len(widths)//4:])
+
+        # -----------------------------
+        # CENTER
+        # -----------------------------
+        cx_local = get_true_center(mask)
+        if cx_local is None:
+            continue
+
+        cx = x1 + cx_local
+
+        # -----------------------------
+        # HEIGHT
+        # -----------------------------
+        y_top = y1 + int(0.02*(y2-y1))
+        y_bottom = y2
+        height_px = (y_bottom - y_top)
+
+        # -----------------------------
+        # SCALE
+        # -----------------------------
+        REAL_HEIGHT_MM = 110
+        mm_per_pixel = (REAL_HEIGHT_MM / height_px) * 1.1
+
+        # -----------------------------
+        #  SHAPE DETECTION
+        # -----------------------------
+        ratio = abs(top_d - bottom_d) / max(top_d, bottom_d)
+
+        if ratio < 0.08:
+            volume = cylinder_volume(height_px, (top_d+bottom_d)/2, mm_per_pixel)
+            shape = "CYL"
+        else:
+            volume = frustum_volume(height_px, top_d, bottom_d, mm_per_pixel)
+            shape = "FRUSTUM"
+
+        print(f"{path} → {shape} → {volume:.2f} mL")
+
+        # -----------------------------
+        # DRAW
+        # -----------------------------
+        top_half = int(top_d / 2)
+        bot_half = int(bottom_d / 2)
+
+        pts = np.array([
+            [cx - top_half, y_top],
+            [cx + top_half, y_top],
+            [cx + bot_half, y_bottom],
+            [cx - bot_half, y_bottom]
+        ], np.int32)
+
+        overlay = display.copy()
+        cv2.fillPoly(overlay, [pts], (255,0,0))
+        cv2.addWeighted(overlay, 0.4, display, 0.6, 0, display)
+
+        cv2.polylines(display, [pts], True, (255,0,0), 2)
+
+        cv2.putText(display,
+                    f"{volume:.1f} mL ({shape})",
+                    (x1, y1-10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9,
+                    (0,255,255),
+                    2)
+
+    # resize for viewing
+    scale = 900 / display.shape[1]
+    display_small = cv2.resize(display,
+                               (900, int(display.shape[0]*scale)))
+
+    cv2.imshow("Result", display_small)
+    cv2.waitKey(1000)
+
+    cv2.imwrite(f"output_{path}", display)
+
+cv2.destroyAllWindows()
