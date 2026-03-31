@@ -1,6 +1,7 @@
 import cv2
 import math
 from ultralytics import YOLO # type: ignore
+import numpy as np
 
 # ------------ CONFIG ------------
 CONF_THRESH = 0.1
@@ -9,7 +10,7 @@ CONF_THRESH = 0.1
 # 41=cup, 70=toilet, 45=bowl, 40=wine glass
 CONTAINER_CLASS_IDS = [41, 70, 45, 40, 39, 75]
 
-CALIBRATE_DIAMETER = 4.6
+CALIBRATE_DIAMETER = 5.2
 CALIBRATE_HEIGHT = 6.5
 CALIBRATE_VOLUME  = 950.0
 CALIBRATE_DEPTH = 233.0 / 1920.0 # adjust depth scalar (see get_depth_scalar) to improve volume estimates
@@ -60,8 +61,8 @@ def get_top_bottom_widths(roi):
     bottom_edge = gray[int(h*0.85):h, :]
 
     # edge detection
-    top_band = cv2.Canny(top_edge, 30, 100)
-    bottom_band = cv2.Canny(bottom_edge, 30, 30)
+    top_band = cv2.Canny(top_edge, 30, 120)
+    bottom_band = cv2.Canny(bottom_edge, 30, 50)
     cv2.imwrite("./samples/top_band.jpg", top_band)
     cv2.imwrite("./samples/bottom_band.jpg", bottom_band)
 
@@ -79,8 +80,6 @@ def get_top_bottom_widths(roi):
 
     top_width = top_q_high - top_q_low
     bot_width = bot_q_high - bot_q_low
-
-    print(f"top_width={top_width}  bot_width={bot_width}")
 
     return top_width, bot_width, (bot_q_low, bot_q_high)
 
@@ -140,7 +139,8 @@ class model:
             box_conf = boxes[0]
             for box in boxes:
                 cls_id = int(box.cls[0])
-                # print(cls_id)
+                print(self.names[cls_id], box.conf[0])
+
                 if cls_id not in CONTAINER_CLASS_IDS:
                     continue
 
@@ -149,17 +149,17 @@ class model:
                     conf_tmp = conf
                     box_conf = box
 
-            x1, y1, x2, y2 = box_conf.xyxy[0].cpu().numpy()
+                    x1, y1, x2, y2 = box_conf.xyxy[0].cpu().numpy()
 
-            self.best_conf = conf
-            self.best_box  = (int(x1), int(y1), int(x2), int(y2))
-            self.best_cls  = cls_id
-            self.best_bound = [
-                (int(x1), int(y1)), # Top-Left
-                (int(x2), int(y1)), # Top-Right
-                (int(x2), int(y2)), # Bottom-Right
-                (int(x1), int(y2))  # Bottom-Left
-            ]
+                    self.best_conf = conf
+                    self.best_box  = (int(x1), int(y1), int(x2), int(y2))
+                    self.best_cls  = cls_id
+                    self.best_bound = [
+                        (int(x1), int(y1)), # Top-Left
+                        (int(x2), int(y1)), # Top-Right
+                        (int(x2), int(y2)), # Bottom-Right
+                        (int(x1), int(y2))  # Bottom-Left
+                    ]
         else:
             print("Error: No container detected")
             return False, display
@@ -278,16 +278,15 @@ class model:
 
 if __name__ == "__main__":
     # import capture  #  Picamera2 module
-    import numpy as np
     import time
 
     rgb_frame = None
     # cam = capture.Camera()
     m = model()
-    m.init_display()
+    # m.init_display()
 
     # rgb_frame = cv2.imread("samples/test/cup_red0.jpg")
-    rgb_frame = cv2.imread("samples/test/cup_red_forward0.jpg")
+    rgb_frame = cv2.imread("samples/test.jpg")
 
     while True:
         # rgb_frame = cam.take_photo()

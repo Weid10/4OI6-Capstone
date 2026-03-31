@@ -29,7 +29,10 @@ class Camera:
         Use Picamera2 to take a photo and save it to OUTPUT_PATH/OUTPUT_NAME
         https://datasheets.raspberrypi.com/camera/picamera2-manual.pdf
         """
-    
+
+        success = self.picam2.autofocus_cycle()
+        print(success)
+
         rgb = self.picam2.capture_array()
         rgb_corrected = np.rot90(rgb, k=1)  # Rotate to correct orientation
 
