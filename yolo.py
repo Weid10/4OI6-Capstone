@@ -12,9 +12,11 @@ CONTAINER_CLASS_IDS = [41, 70, 45, 40, 39, 75]
 
 CALIBRATE_DIAMETER = 5.2
 CALIBRATE_HEIGHT = 6.5
-CALIBRATE_VOLUME  = 950.0
+CALIBRATE_VOLUME  = 850.0
 CALIBRATE_DEPTH = 233.0 / 1920.0 # adjust depth scalar (see get_depth_scalar) to improve volume estimates
 CALIBRATE_DEPTH_SENSITIVITY = 2.5
+
+DEBUG = True
 # --------------------------------
 
 def cylinder_volume_ml(h_mm, d_mm):
@@ -48,45 +50,72 @@ def get_depth_scalar(best_box):
     return depth_scalar
 
 
-def get_top_bottom_widths(roi):
+# -----------------------------
+# MASK AND HANDLE REMOVAL LOGIC
+# -----------------------------
+def get_mask(roi):
     """
-    Gets the top and bottom diameter of the cup by edge detection
+    Extracts a clean binary mask of the object in the ROI.
     """
-
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5,5), 0)
+    if DEBUG: cv2.imwrite("samples/debug/blur.jpg", blur)
 
-    # split top and bottom for separate edge detection
-    h, w = gray.shape
-    top_edge = gray[0:int(h*0.25), :]
-    bottom_edge = gray[int(h*0.85):h, :]
+    edges = cv2.Canny(blur, 40, 120)
+    if DEBUG: cv2.imwrite("samples/debug/edges.jpg", edges)
 
-    # edge detection
-    top_band = cv2.Canny(top_edge, 30, 120)
-    bottom_band = cv2.Canny(bottom_edge, 30, 50)
-    cv2.imwrite("./samples/top_band.jpg", top_band)
-    cv2.imwrite("./samples/bottom_band.jpg", bottom_band)
+    _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    # get x coordinates of edges in top and bottom bands
-    top_x = np.where(top_band > 0)
-    bot_x = np.where(bottom_band > 0)
+    mask = cv2.bitwise_or(edges, th)
 
-    if len(top_x[1]) < 10 or len(bot_x[1]) < 10:
+    kernel = np.ones((5,5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    mask = cv2.dilate(mask, kernel, iterations=2)
+    if DEBUG: cv2.imwrite("samples/debug/mask.jpg", mask)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if contours:
+        largest = max(contours, key=cv2.contourArea)
+        clean = np.zeros_like(mask)
+        cv2.drawContours(clean, [largest], -1, 255, -1)
+        if DEBUG: cv2.imwrite("samples/debug/output.jpg", clean)
+        return clean
+
+    return mask
+
+
+def get_width(mask, y):
+    """
+    Finds the width of the mask at a specific y-row using percentiles to ignore handles/outliers.
+    """
+    xs = np.where(mask[y] > 0)[0]
+    if len(xs) < 20:
         return None
 
-    top_q_low = np.percentile(top_x[1], 5)
-    top_q_high = np.percentile(top_x[1], 95)
-    bot_q_low = np.percentile(bot_x[1], 5)
-    bot_q_high = np.percentile(bot_x[1], 95)
+    left = np.percentile(xs, 10)
+    right = np.percentile(xs, 90)
 
-    top_width = top_q_high - top_q_low
-    bot_width = bot_q_high - bot_q_low
+    return int(right - left)
 
-    return top_width, bot_width, (bot_q_low, bot_q_high)
+
+def get_true_center(mask):
+    """
+    Calculates the true center of the cup by taking the global percentiles of all 'x' pixels.
+    """
+    xs = np.where(mask > 0)[1]
+
+    if len(xs) < 50:
+        return None
+
+    left = np.percentile(xs, 20)
+    right = np.percentile(xs, 80)
+
+    return int((left + right) / 2)
 
 
 class model:
     def __init__(self):
-
         self.shape = "Cylinder"
 
         self.best_box = (0,0,0,0)
@@ -122,98 +151,126 @@ class model:
         cv2.createTrackbar("VolScale_x1000", "CupPiYOLO", 1000, 3000, nothing)
 
 
+    def get_bounding_box(self, results):
+        conf_tmp = 0.0
+        box_conf = None
+        for box in results[0].boxes:
+            cls_id = int(box.cls[0])
+            
+            if cls_id not in CONTAINER_CLASS_IDS:
+                continue
+
+            conf = float(box.conf[0])
+            if conf > conf_tmp:
+                conf_tmp = conf
+                box_conf = box
+
+        if box_conf is None:
+            return None
+
+        x1, y1, x2, y2 = box_conf.xyxy[0].cpu().numpy()
+        return (int(x1), int(y1), int(x2), int(y2))
+    
+
     def analyze_frame(self, rgb_frame):
         """
-        Run YOLO + simple geometry on a single RGB frame
+        Run YOLO + mask profiling geometry on a single RGB frame
         """
         display = rgb_frame.copy()
 
-        vol_scale = self.vscale / 1000.0
-
         # YOLO inference
         results = self.model(rgb_frame, conf=CONF_THRESH, verbose=False)
-        if len(results):
-            boxes = results[0].boxes
-            
-            conf_tmp = 0.0
-            box_conf = boxes[0]
-            for box in boxes:
-                cls_id = int(box.cls[0])
-                print(self.names[cls_id], box.conf[0])
-
-                if cls_id not in CONTAINER_CLASS_IDS:
-                    continue
-
-                conf = float(box.conf[0])
-                if conf > conf_tmp:
-                    conf_tmp = conf
-                    box_conf = box
-
-                    x1, y1, x2, y2 = box_conf.xyxy[0].cpu().numpy()
-
-                    self.best_conf = conf
-                    self.best_box  = (int(x1), int(y1), int(x2), int(y2))
-                    self.best_cls  = cls_id
-                    self.best_bound = [
-                        (int(x1), int(y1)), # Top-Left
-                        (int(x2), int(y1)), # Top-Right
-                        (int(x2), int(y2)), # Bottom-Right
-                        (int(x1), int(y2))  # Bottom-Left
-                    ]
-        else:
+        self.best_box = self.get_bounding_box(results)
+        if self.best_box is None:
             print("Error: No container detected")
             return False, display
 
-
         if self.best_box is not None:
             x1, y1, x2, y2 = self.best_box
-            ratio = 0
-
             depth_scale = get_depth_scalar(self.best_box)
-
-            # get height dimensions, width is handled later
-            # scale dimensions by manually calibrated pixel per mm, and depth
+            
+            roi = rgb_frame[y1:y2, x1:x2]
+            mask = get_mask(roi)
+            
             height_px = abs(y2 - y1)
-            height_mm = height_px / self.pxmm_h * depth_scale
+            h, w = mask.shape
 
-            # see if top/bottom widths are different
-            widths = get_top_bottom_widths(rgb_frame[y1:y2, x1:x2])
-            if widths is None:
-                # fallback to treating as cylinder if we can't get widths
-                self.shape = "Cylinder"
+            widths = []
+            for y in range(int(h * 0.1), int(h * 0.9)):
+                w_ = get_width(mask, y)
+                if w_ is not None:
+                    widths.append(w_)
+
+            # Fallback if masking fails to find enough rows
+            if len(widths) < 20:
+                self.shape = "CYL"
                 diameter_px = abs(x2 - x1)
                 diameter_mm = diameter_px / self.pxmm_w * depth_scale
+                height_mm = height_px / self.pxmm_h * depth_scale
+                
                 volume = cylinder_volume_ml(height_mm, diameter_mm)
-                print(f"Raw volume estimate (cylinder error): {volume:.1f} mL (h={height_mm:.1f}mm, d={diameter_mm:.1f}mm)")
+                print(f"Raw volume estimate (fallback): {volume:.1f} mL (h={height_mm:.1f}mm, d={diameter_mm:.1f}mm)")
+                
+                self.dim_px = (height_px, diameter_px)
+                self.dim_mm = (height_mm, diameter_mm)
+                
+                self.best_bound = [
+                    (x1, y1), (x2, y1), (x2, y2), (x1, y2)
+                ]
 
             else:
-                top_px, bot_px, bound_adjust = widths
-                ratio = top_px / bot_px
+                widths_arr = np.array(widths)
 
-                # scale dimensions by manually calibrated pixel per mm, and depth
+                # Get stable top and bottom diameters
+                top_px = np.median(widths_arr[:len(widths_arr)//4])
+                bot_px = np.median(widths_arr[-len(widths_arr)//4:])
+                
+                # Get true center
+                cx_local = get_true_center(mask)
+                if cx_local is None:
+                    cx_local = int((x2 - x1) / 2) # fallback to bbox center
+                
+                cx = x1 + cx_local
+
+                # Rim position offset
+                y_top = y1 + int(0.02 * height_px)
+                y_bottom = y2
+                
+                adj_height_px = y_bottom - y_top
+
+                # Scale dimensions by manually calibrated pixel per mm and depth
+                adj_height_mm = adj_height_px / self.pxmm_h * depth_scale
                 top_mm = top_px / self.pxmm_w * depth_scale
                 bot_mm = bot_px / self.pxmm_w * depth_scale
 
-                # calculate volume for cylinder or frustum
-                if 0.9 < ratio < 1.1:
-                    self.shape = "Cylinder"
+                # Calculate shape logic based on ratio difference
+                ratio = abs(top_px - bot_px) / max(top_px, bot_px)
+
+                if ratio < 0.08:
+                    self.shape = "CYL"
                     diameter_mm = (top_mm + bot_mm)/2
-                    volume = cylinder_volume_ml(height_mm, diameter_mm)
-                    print(f"Raw volume estimate (cylinder): {volume:.1f} mL (h={height_mm:.1f}mm, d={diameter_mm:.1f}mm, ratio={ratio:.2f})")
-
+                    volume = cylinder_volume_ml(adj_height_mm, diameter_mm)
+                    print(f"Raw volume estimate ({self.shape}): {volume:.1f} mL (h={adj_height_mm:.1f}mm, d={diameter_mm:.1f}mm, ratio={ratio:.3f})")
                 else:
-                    self.shape = "Frustum"
-                    volume = frustum_volume_ml(height_mm, top_mm, bot_mm)
-                    print(f"Raw volume estimate (frustrum): {volume:.1f} mL (h={height_mm:.1f}mm, top={top_mm:.1f}mm, bot={bot_mm:.1f}mm, ratio={ratio:.2f})")
+                    self.shape = "FRUSTUM"
+                    volume = frustum_volume_ml(adj_height_mm, top_mm, bot_mm)
+                    print(f"Raw volume estimate ({self.shape}): {volume:.1f} mL (h={adj_height_mm:.1f}mm, top={top_mm:.1f}mm, bot={bot_mm:.1f}mm, ratio={ratio:.3f})")
 
-                    # adjust bounding box to match measured bottom widths
-                    self.best_bound[2] = (int(x1 + bound_adjust[1]), y2) # Bottom-Right
-                    self.best_bound[3] = (int(x1 + bound_adjust[0]), y2) # Bottom-Left
+                # Set bound polygon for drawing
+                top_half = int(top_px / 2)
+                bot_half = int(bot_px / 2)
 
-            # self.dim_px = (height_px, diameter_px)
-            # self.dim_mm = (height_mm, diameter_mm)
+                self.best_bound = [
+                    (cx - top_half, y_top),
+                    (cx + top_half, y_top),
+                    (cx + bot_half, y_bottom),
+                    (cx - bot_half, y_bottom)
+                ]
 
-            self.vol_final = volume * vol_scale
+                self.dim_px = (adj_height_px, top_px)
+                self.dim_mm = (adj_height_mm, top_mm)
+
+            self.vol_final = volume * self.vscale / 1000.0
             print(f"vol_final = {self.vol_final:.1f} mL")
 
         return True, display
@@ -230,44 +287,47 @@ class model:
 
     def draw_info(self, display):
         """
-        Draw bounding box and volume estimate on display frame
+        Draw accurate polygon bounds and volume estimate on display frame
         """
+        if self.best_box is None:
+            cv2.putText(display, "No container detected", (10, 55),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            return display
+
         x1, y1, x2, y2 = self.best_box
         height_px, diameter_px = self.dim_px
         h_mm, d_mm = self.dim_mm
 
         label = f"{self.names[self.best_cls]} {self.best_conf:.2f}"
-        if self.shape == "Frustum":
-            bound = self.best_bound
-            cv2.line(display, bound[0], bound[1], (0, 255, 0), 2)
-            cv2.line(display, bound[1], bound[2], (0, 255, 0), 2)
-            cv2.line(display, bound[2], bound[3], (0, 255, 0), 2)
-            cv2.line(display, bound[3], bound[0], (0, 255, 0), 2)
-        else:
-            cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        
+        # Draw translucent polygon overlay for the measured area
+        bound_pts = np.array(self.best_bound, np.int32)
+        overlay = display.copy()
+        cv2.fillPoly(overlay, [bound_pts], (255, 0, 0))
+        cv2.addWeighted(overlay, 0.4, display, 0.6, 0, display)
+        cv2.polylines(display, [bound_pts], True, (255, 0, 0), 2)
+
+        # Draw YOLO bounding box lightly for reference
+        cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 1)
         cv2.putText(display, label, (x1, max(0, y1 - 10)),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-        if self.best_box is not None:
-            cv2.putText(display,
-                        f"height_px={height_px}  diameter_px={diameter_px}",
-                        (10, 55),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-            cv2.putText(display,
-                        f"h_mm={h_mm:.1f}  d_mm={d_mm:.1f}",
-                        (10, 80),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-            cv2.putText(display,
-                        f"Volume ≈ {self.vol_final:.1f} mL",
-                        (10, 105),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-        else:
-            cv2.putText(display,
-                    "No container detected",
+        # Draw specs
+        cv2.putText(display,
+                    f"height_px={height_px}  width_px={int(diameter_px)}",
                     (10, 55),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+        cv2.putText(display,
+                    f"h_mm={h_mm:.1f}  d_mm={d_mm:.1f}",
+                    (10, 80),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+        cv2.putText(display,
+                    f"Volume ≈ {self.vol_final:.1f} mL ({self.shape})",
+                    (10, 105),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+
         return display
 
 
@@ -286,9 +346,14 @@ if __name__ == "__main__":
     # m.init_display()
 
     # rgb_frame = cv2.imread("samples/test/cup_red0.jpg")
-    rgb_frame = cv2.imread("samples/test.jpg")
+    # rgb_frame = cv2.imread("samples/cup_cat_forward_center.jpg")
+    # rgb_frame = cv2.imread("samples/cup_cat_back_center.jpg")
+    # rgb_frame = cv2.imread("samples/cup_red_back_center.jpg")
+    # rgb_frame = cv2.imread("samples/cup_red_forward_center.jpg")
+    rgb_frame = cv2.imread("samples/cup_green_back_center.jpg")
+    # rgb_frame = cv2.imread("samples/test.jpg")
 
-    while True:
+    if rgb_frame is not None:
         # rgb_frame = cam.take_photo()
 
         ret, disp = m.analyze_frame(rgb_frame)
@@ -297,5 +362,9 @@ if __name__ == "__main__":
 
         disp = m.draw_info(disp)
         cv2.imwrite("./samples/marked.jpg", disp)
-    
-        time.sleep(1)
+        
+        # Show output for testing
+        # cv2.imshow("Result", disp)
+
+    else:
+        print("Could not load image. Please check the file path.")
