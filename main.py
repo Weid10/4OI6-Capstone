@@ -27,7 +27,6 @@ if __name__ == "__main__":
             print("Using test photo from disk: ./samples/test.jpg")
             rgb_frame = cv2.imread("./samples/test.jpg")
 
-
         # Analze the photo with YOLO and get the estimated volume
         print("Analyzing photo...")
         ret, disp = m.analyze_frame(rgb_frame)
@@ -48,7 +47,6 @@ if __name__ == "__main__":
                         (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
             cv2.imshow("CupPiYOLO", disp)
-
 
         serial_control.send_volume(m.vol_final)
         time.sleep(10)

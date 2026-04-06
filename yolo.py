@@ -114,7 +114,7 @@ def get_true_center(mask):
     return int((left + right) / 2)
 
 
-def get_top_bottom_widths(roi):
+def get_simple_widths(roi):
     """
     Gets the top and bottom diameter for cups with no handles
     """
@@ -131,8 +131,8 @@ def get_top_bottom_widths(roi):
     top_band = cv2.Canny(top_edge, 60, 120)
     bottom_band = cv2.Canny(bottom_edge, 60, 50)
     if DEBUG:
-        cv2.imwrite("./samples/top_band.jpg", top_band)
-        cv2.imwrite("./samples/bottom_band.jpg", bottom_band)
+        cv2.imwrite("./samples/debug/top_band.jpg", top_band)
+        cv2.imwrite("./samples/debug/bottom_band.jpg", bottom_band)
 
     # get x coordinates of edges in top and bottom bands
     top_x = np.where(top_band > 0)
@@ -207,7 +207,11 @@ class model:
             return None
 
         x1, y1, x2, y2 = box_conf.xyxy[0].cpu().numpy()
-        return (int(x1), int(y1), int(x2), int(y2))
+        self.best_box = (int(x1), int(y1), int(x2), int(y2))
+        self.best_bound = [
+            (x1, y1), (x2, y1), (x2, y2), (x1, y2)
+        ]
+        return None
     
 
     def analyze_frame(self, rgb_frame):
@@ -218,7 +222,8 @@ class model:
 
         # YOLO inference
         results = self.model(rgb_frame, conf=CONF_THRESH, verbose=False)
-        self.best_box = self.get_bounding_box(results)
+        self.get_bounding_box(results)
+        
         if self.best_box is None:
             print("Error: No container detected")
             return False, display
@@ -267,16 +272,12 @@ class model:
             diameter_px = abs(x2 - x1)
             diameter_mm = diameter_px / self.pxmm_w * depth_scale
             height_mm = height_px / self.pxmm_h * depth_scale
-            
+
             volume = cylinder_volume_ml(height_mm, diameter_mm)
             print(f"Raw volume estimate (fallback): {volume:.1f} mL (h={height_mm:.1f}mm, d={diameter_mm:.1f}mm)")
-            
+
             self.dim_px = (height_px, diameter_px)
             self.dim_mm = (height_mm, diameter_mm)
-            
-            self.best_bound = [
-                (x1, y1), (x2, y1), (x2, y2), (x1, y2)
-            ]
 
         else:
             widths_arr = np.array(widths)
@@ -353,7 +354,7 @@ class model:
         height_mm = height_px / self.pxmm_h * depth_scale
 
         # see if top/bottom widths are different
-        widths = get_top_bottom_widths(roi)
+        widths = get_simple_widths(roi)
         if widths is None:
             # fallback to treating as cylinder if we can't get widths
             self.shape = "Cylinder"
@@ -390,7 +391,6 @@ class model:
         print(f"vol_final = {self.vol_final:.1f} mL")
 
 
-
     def get_trackbar_values(self):
         self.pxmm_h = cv2.getTrackbarPos("PXmm_H", "CupPiYOLO")
         self.pxmm_w = cv2.getTrackbarPos("PXmm_W", "CupPiYOLO")
@@ -403,19 +403,17 @@ class model:
 
     def draw_info(self, display):
         """
-        Draw accurate polygon bounds and volume estimate on display frame
+        Draw bounding box, bounds, and volume estimate on display frame
         """
+
         if self.best_box is None:
             cv2.putText(display, "No container detected", (10, 55),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             return display
 
         x1, y1, x2, y2 = self.best_box
-        height_px, diameter_px = self.dim_px
-        h_mm, d_mm = self.dim_mm
+        label = f"Estimated: {self.vol_final:.1f} mL"
 
-        label = f"{self.names[self.best_cls]} {self.best_conf:.2f}"
-        
         # Draw translucent polygon overlay for the measured area
         bound_pts = np.array(self.best_bound, np.int32)
         overlay = display.copy()
@@ -427,17 +425,6 @@ class model:
         cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 1)
         cv2.putText(display, label, (x1, max(0, y1 - 10)),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-        # Draw specs
-        cv2.putText(display,
-                    f"height_px={height_px}  width_px={int(diameter_px)}",
-                    (10, 55),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-        cv2.putText(display,
-                    f"h_mm={h_mm:.1f}  d_mm={d_mm:.1f}",
-                    (10, 80),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
         cv2.putText(display,
                     f"Volume ≈ {self.vol_final:.1f} mL ({self.shape})",
@@ -462,10 +449,11 @@ if __name__ == "__main__":
     # m.init_display()
 
     # rgb_frame = cv2.imread("samples/test/cup_red0.jpg")
-    rgb_frame = cv2.imread("samples/cup_cat_forward_center.jpg") # 1.12
+    # rgb_frame = cv2.imread("samples/cup_cat_forward_center.jpg") # 1.12
     # rgb_frame = cv2.imread("samples/cup_cat_back_center.jpg")
-    # rgb_frame = cv2.imread("samples/cup_red_back_center.jpg") # 1.3
-    # rgb_frame = cv2.imread("samples/cup_red_forward_center.jpg")
+    rgb_frame = cv2.imread("samples/cup_red_back_center.jpg") # 1.3
+    # rgb_frame = cv2.imread("samples/cup_red_middle_center.jpg") # 1.32
+    # rgb_frame = cv2.imread("samples/cup_red_forward_center.jpg") # 1.33
     # rgb_frame = cv2.imread("samples/cup_green_back_center.jpg") # 1.08
     # rgb_frame = cv2.imread("samples/test.jpg") # 1
 
