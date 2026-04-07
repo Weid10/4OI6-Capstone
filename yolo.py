@@ -11,8 +11,8 @@ CONF_THRESH = 0.1
 CONTAINER_CLASS_IDS = [41, 70, 45, 40, 39, 75]
 
 CALIBRATE_DIAMETER = 5.2
-CALIBRATE_HEIGHT = 6.5
-CALIBRATE_VOLUME  = 0.85
+CALIBRATE_HEIGHT = 7
+CALIBRATE_VOLUME  = 0.8
 CALIBRATE_DEPTH = 210.0 / 1920.0 # adjust depth scalar (see get_depth_scalar) to improve volume estimates
 CALIBRATE_DEPTH_SENSITIVITY = 2.2
 
@@ -114,6 +114,28 @@ def get_true_center(mask):
     return int((left + right) / 2)
 
 
+def get_widths(mask):
+    """
+    Finds the width of the mask at a specific y-row
+    """
+    widths = []
+    for y in range(mask.shape[0]):
+        xs = np.where(mask[y] > 0)[0]
+        if len(xs) < 20:
+            continue
+        
+        # get leftmost and rightmost x-coordinates of the mask at this row
+        left = xs[0]
+        right = xs[-1]
+
+        # if DEBUG:
+            # print(f"get_width: y={y}, int(right - left)={int(right - left)}, left={left:.1f}, right={right:.1f}")
+
+        widths.append(int(right - left))
+
+    return widths
+
+
 def get_simple_widths(roi):
     """
     Gets the top and bottom diameter for cups with no handles
@@ -151,6 +173,78 @@ def get_simple_widths(roi):
 
     return top_width, bot_width, (bot_q_low, bot_q_high)
 
+
+def get_stable_top_width(widths, jump_threshold=0.10, window_size=5, stable_threshold=0.05):
+    """
+    1. Waits for the width to stabilize (ignoring narrow camera-angle rims).
+    2. Uses that stable width as a baseline to detect sudden handle jumps.
+    """
+    if len(widths) < window_size * 2:
+        return np.median(widths) if widths else 0
+
+    baseline = None
+    stable_index = 0
+
+    # Find a stable cross-section (ignore the rim)
+    for i in range(len(widths) - window_size):
+        window = widths[i : i + window_size]
+        w_min, w_max = min(window), max(window)
+        
+        # If the widest and narrowest part of this chunk are within 5% 
+        # of each other, we have hit the straight body of the cup
+        if (w_max - w_min) / max(w_min, 1) < stable_threshold:
+            baseline = np.median(window)
+            stable_index = i + window_size
+            break
+            
+    # Fallback if the cup is aggressively tapered and never "flattens" out
+    if baseline is None:
+        return np.median(widths[:len(widths)//4])
+
+    stable_widths = [baseline]
+    
+    # Scan for the handle
+    for i in range(stable_index, len(widths)):
+        w = widths[i]
+        
+        # Did it suddenly get >15% wider than our baseline?
+        jump_ratio = abs(w - baseline) / max(baseline, 1)
+        
+        if jump_ratio > jump_threshold:
+            break
+        else:
+            stable_widths.append(w)
+            baseline = (baseline * 0.9) + (w * 0.1)
+
+    return np.median(stable_widths)
+
+
+def erase_left_outliers(mask):
+    """
+    Physically removes the left 10% of white pixels from every row in the mask.
+    """
+    # Make a copy so we don't accidentally ruin the original mask
+    cleaned_mask = mask.copy()
+    h, w = cleaned_mask.shape
+
+    # Scan every row in the image
+    for y in range(h):
+        # Get the X-coordinates of all white pixels on this row
+        xs = np.where(cleaned_mask[y] > 0)[0]
+        
+        # Only process rows that actually have a chunk of white pixels
+        if len(xs) > 20:
+            # Find the exact X-coordinate where the 10th percentile lands
+            left_cutoff = int(np.percentile(xs, 10))
+            right_cutoff = int(np.percentile(xs, 100))
+
+            # Set every pixel from the start of the row up to the cutoff to black (0)
+            cleaned_mask[y, :left_cutoff] = 0
+            cleaned_mask[y, right_cutoff:] = 0
+    
+    if DEBUG: cv2.imwrite("samples/debug/cleaned_mask.jpg", cleaned_mask)
+            
+    return cleaned_mask
 
 class model:
     def __init__(self):
@@ -232,7 +326,7 @@ class model:
         roi = rgb_frame[y1:y2, x1:x2]
 
         ratio = (y2 - y1) / (x2 - x1)
-        print(f"Detected box ratio (h/w): {ratio:.2f}")
+        # print(f"Detected box ratio (h/w): {ratio:.2f}")
 
         if ratio < 1.2:
             print("Applying handle volume calculation")
@@ -256,15 +350,13 @@ class model:
         depth_scale = get_depth_scalar(self.best_box)
         
         mask = get_mask(roi)
-        
+
+        widths = get_widths(mask)
+        outlier_mask = erase_left_outliers(mask)
+        outlier_widths = get_widths(outlier_mask)
+
         height_px = abs(y2 - y1)
         h, w = mask.shape
-
-        widths = []
-        for y in range(int(h * 0.1), int(h * 0.9)):
-            w_ = get_width(mask, y)
-            if w_ is not None:
-                widths.append(w_)
 
         # Fallback if masking fails to find enough rows
         if len(widths) < 20:
@@ -281,13 +373,15 @@ class model:
 
         else:
             widths_arr = np.array(widths)
+            outlier_widths_arr = np.array(outlier_widths)
 
             # Get stable top and bottom diameters
-            top_px = np.median(widths_arr[:len(widths_arr)//4])
-            bot_px = np.median(widths_arr[-len(widths_arr)//4:])
+            # top_px = np.median(widths_arr[:len(widths_arr)//4])
+            top_px = get_stable_top_width(widths_arr)
+            bot_px = np.median(outlier_widths_arr[-len(outlier_widths_arr)//5:])
             
             # Get true center
-            cx_local = get_true_center(mask)
+            cx_local = get_true_center(outlier_mask)
             if cx_local is None:
                 cx_local = int((x2 - x1) / 2) # fallback to bbox center
             
@@ -331,7 +425,7 @@ class model:
             self.dim_px = (adj_height_px, top_px)
             self.dim_mm = (adj_height_mm, top_mm)
 
-        self.vol_final = volume * self.vscale
+        self.vol_final = volume * self.vscale * 0.88
         print(f"vol_final = {self.vol_final:.1f} mL")
 
 
@@ -451,10 +545,11 @@ if __name__ == "__main__":
     # rgb_frame = cv2.imread("samples/test/cup_red0.jpg")
     # rgb_frame = cv2.imread("samples/cup_cat_forward_center.jpg") # 1.12
     # rgb_frame = cv2.imread("samples/cup_cat_back_center.jpg")
-    rgb_frame = cv2.imread("samples/cup_red_back_center.jpg") # 1.3
+    # rgb_frame = cv2.imread("samples/cup_red_back_center.jpg") # 1.3
     # rgb_frame = cv2.imread("samples/cup_red_middle_center.jpg") # 1.32
     # rgb_frame = cv2.imread("samples/cup_red_forward_center.jpg") # 1.33
-    # rgb_frame = cv2.imread("samples/cup_green_back_center.jpg") # 1.08
+    rgb_frame = cv2.imread("samples/cup_green_back_center.jpg") # 1.08
+    # rgb_frame = cv2.imread("samples/cup_blue.jpg")
     # rgb_frame = cv2.imread("samples/test.jpg") # 1
 
     if rgb_frame is not None:

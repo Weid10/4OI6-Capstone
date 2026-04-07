@@ -48,5 +48,9 @@ if __name__ == "__main__":
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
             cv2.imshow("CupPiYOLO", disp)
 
+        if m.vol_final > 600:
+            print("Volume exceeds 600 mL, skipping serial send")
+            continue
+
         serial_control.send_volume(m.vol_final)
         time.sleep(10)

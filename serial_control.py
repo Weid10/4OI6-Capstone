@@ -1,3 +1,4 @@
+import time
 import serial
 
 PORT_NAME = '/dev/ttyACM0'  # Update this to serial port
@@ -64,7 +65,8 @@ def send_volume(volume_ml):
         except Exception as e:
             print(f"Error sending volume: {e}")
             return False
-        
+    
+    time.sleep(2)  # Short delay to ensure message is sent before clearing buffer
     clear_buffer()
     return False
 
