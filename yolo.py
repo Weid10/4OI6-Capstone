@@ -174,7 +174,7 @@ def get_simple_widths(roi):
     return top_width, bot_width, (bot_q_low, bot_q_high)
 
 
-def get_stable_top_width(widths, jump_threshold=0.10, window_size=5, stable_threshold=0.05):
+def get_stable_top_width(widths, jump_threshold=0.10, window_size=5, stable_threshold=0.1):
     """
     1. Waits for the width to stabilize (ignoring narrow camera-angle rims).
     2. Uses that stable width as a baseline to detect sudden handle jumps.
@@ -521,7 +521,7 @@ class model:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
         cv2.putText(display,
-                    f"Volume ≈ {self.vol_final:.1f} mL ({self.shape})",
+                    f"Volume ~ {self.vol_final:.1f} mL ({self.shape})",
                     (10, 105),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
